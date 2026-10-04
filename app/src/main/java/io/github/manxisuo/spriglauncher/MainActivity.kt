@@ -2,15 +2,19 @@ package io.github.manxisuo.spriglauncher
 
 import android.content.Intent
 import android.os.Bundle
+import android.net.Uri
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +28,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -31,11 +37,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -45,14 +53,18 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
@@ -61,6 +73,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.manxisuo.spriglauncher.data.AppPreferenceEntity
+import io.github.manxisuo.spriglauncher.data.BackgroundMode
 import io.github.manxisuo.spriglauncher.data.ThemeMode
 import io.github.manxisuo.spriglauncher.domain.LaunchableEntry
 import io.github.manxisuo.spriglauncher.domain.UsageSource
@@ -133,33 +146,79 @@ private fun LauncherApp(state: LauncherUiState, vm: MainViewModel, onRequestHome
 
 @Composable
 private fun HomeScreen(state: LauncherUiState, vm: MainViewModel) {
-    Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
-        ClockHeader()
-        Spacer(Modifier.height(20.dp))
-        if (state.pinned.isNotEmpty()) {
-            SectionTitle("固定")
-            AppGrid(state.pinned, state, vm, userScroll = false)
-            Spacer(Modifier.height(14.dp))
+    val context = LocalContext.current
+    val backgroundColor = Color(state.backgroundColorArgb.toInt())
+    val contentColor = when (state.backgroundMode) {
+        BackgroundMode.DEFAULT -> MaterialTheme.colorScheme.onBackground
+        BackgroundMode.COLOR -> if (backgroundColor.luminance() > 0.45f) Color(0xFF171814) else Color.White
+        BackgroundMode.IMAGE -> Color.White
+    }
+    Box(Modifier.fillMaxSize()) {
+        when (state.backgroundMode) {
+            BackgroundMode.DEFAULT -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
+            BackgroundMode.COLOR -> Box(Modifier.fillMaxSize().background(backgroundColor))
+            BackgroundMode.IMAGE -> {
+                state.backgroundImage?.let {
+                    Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                }
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.32f)))
+            }
         }
-        SectionTitle(if (state.learning) "常用 · 正在学习使用习惯" else "常用")
-        if (state.frequent.isEmpty()) {
-            Text("从这里打开应用后，常用入口会逐渐稳定。", style = MaterialTheme.typography.bodyMedium)
-        } else AppGrid(state.frequent, state, vm, userScroll = false)
-        Spacer(Modifier.weight(1f))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = { vm.navigate(Screen.ALL_APPS) }, modifier = Modifier.weight(1f)) { Text("搜索 / 全部应用") }
-            OutlinedButton(onClick = { vm.navigate(Screen.SETTINGS) }) { Text("设置") }
+        CompositionLocalProvider(LocalContentColor provides contentColor) {
+            Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
+                ClockHeader(
+                    onTimeClick = {
+                        runCatching { context.startActivity(vm.clockIntent()) }
+                            .onFailure { vm.externalLaunchFailed("时钟") }
+                    },
+                    onDateClick = {
+                        runCatching { context.startActivity(vm.calendarIntent()) }
+                            .onFailure { vm.externalLaunchFailed("日历") }
+                    },
+                )
+                Spacer(Modifier.height(20.dp))
+                if (state.pinned.isNotEmpty()) {
+                    SectionTitle("固定")
+                    AppGrid(state.pinned, state, vm, userScroll = false)
+                    Spacer(Modifier.height(14.dp))
+                }
+                SectionTitle(if (state.learning) "常用 · 正在学习使用习惯" else "常用")
+                if (state.frequent.isEmpty()) {
+                    Text("从这里打开应用后，常用入口会逐渐稳定。", style = MaterialTheme.typography.bodyMedium)
+                } else AppGrid(state.frequent, state, vm, userScroll = false)
+                Spacer(Modifier.weight(1f))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(
+                        onClick = { vm.navigate(Screen.ALL_APPS) },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = contentColor),
+                    ) { Text("搜索 / 全部应用") }
+                    OutlinedButton(
+                        onClick = { vm.navigate(Screen.SETTINGS) },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = contentColor),
+                    ) { Text("设置") }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun ClockHeader() {
+private fun ClockHeader(onTimeClick: () -> Unit, onDateClick: () -> Unit) {
     var now by remember { mutableStateOf(Date()) }
     LaunchedEffect(Unit) { while (true) { delay(30_000); now = Date() } }
     Column {
-        Text(DateFormat.getTimeInstance(DateFormat.SHORT).format(now), style = MaterialTheme.typography.displayMedium, fontWeight = FontWeight.Light)
-        Text(DateFormat.getDateInstance(DateFormat.FULL, Locale.getDefault()).format(now), style = MaterialTheme.typography.bodyLarge)
+        Text(
+            DateFormat.getTimeInstance(DateFormat.SHORT).format(now),
+            modifier = Modifier.clickable(onClick = onTimeClick),
+            style = MaterialTheme.typography.displayMedium,
+            fontWeight = FontWeight.Light,
+        )
+        Text(
+            DateFormat.getDateInstance(DateFormat.FULL, Locale.getDefault()).format(now),
+            modifier = Modifier.clickable(onClick = onDateClick),
+            style = MaterialTheme.typography.bodyLarge,
+        )
     }
 }
 
@@ -194,9 +253,30 @@ private fun AllAppsScreen(state: LauncherUiState, vm: MainViewModel) {
 private fun SettingsScreen(state: LauncherUiState, vm: MainViewModel, onRequestHome: () -> Unit) {
     val context = LocalContext.current
     var confirmClear by remember { mutableStateOf(false) }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let {
+            val permission = runCatching {
+                context.contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            if (permission.isSuccess) {
+                state.backgroundImageUri?.takeIf { old -> old != it.toString() }?.let { old ->
+                    runCatching {
+                        context.contentResolver.releasePersistableUriPermission(
+                            Uri.parse(old),
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                        )
+                    }
+                }
+                vm.useImageBackground(it.toString())
+            } else vm.backgroundImagePermissionFailed()
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         TopAppBar(title = { Text("设置") }, navigationIcon = { TextButton(onClick = { vm.navigate(Screen.HOME) }) { Text("返回") } })
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
             SettingCard("默认桌面", if (state.homeRoleHeld) "已设为默认桌面" else "尚未设为默认桌面") {
                 Button(onClick = onRequestHome) { Text(if (state.homeRoleHeld) "打开系统桌面设置" else "设为默认桌面") }
             }
@@ -215,6 +295,32 @@ private fun SettingsScreen(state: LauncherUiState, vm: MainViewModel, onRequestH
                     }
                 }
             }
+            SettingCard("首页背景", "使用默认主题背景、纯色或本地图片") {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = state.backgroundMode == BackgroundMode.DEFAULT,
+                        onClick = vm::useDefaultBackground,
+                        label = { Text("默认") },
+                    )
+                    FilterChip(
+                        selected = state.backgroundMode == BackgroundMode.IMAGE,
+                        onClick = { imagePicker.launch(arrayOf("image/*")) },
+                        label = { Text(if (state.backgroundMode == BackgroundMode.IMAGE) "更换图片" else "选择图片") },
+                    )
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    BackgroundColorPresets.forEach { preset ->
+                        BackgroundColorOption(
+                            name = preset.first,
+                            colorArgb = preset.second,
+                            selected = state.backgroundMode == BackgroundMode.COLOR && state.backgroundColorArgb == preset.second,
+                            onClick = { vm.useColorBackground(preset.second) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+                Text("图片只保留系统授权的读取地址，不会复制照片或申请存储权限。", style = MaterialTheme.typography.bodySmall)
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(onClick = vm::manualResort) { Text("立即重新排序") }
                 OutlinedButton(onClick = { confirmClear = true }) { Text("清空学习数据") }
@@ -229,6 +335,34 @@ private fun SettingsScreen(state: LauncherUiState, vm: MainViewModel, onRequestH
         confirmButton = { TextButton(onClick = { confirmClear = false; vm.clearLearning() }) { Text("清空") } },
         dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("取消") } },
     )
+}
+
+private val BackgroundColorPresets = listOf(
+    "米白" to 0xFFF3F0E8,
+    "雾蓝" to 0xFFDCE8F2,
+    "松绿" to 0xFFBFD8C2,
+    "夜墨" to 0xFF202725,
+)
+
+@Composable
+private fun BackgroundColorOption(
+    name: String,
+    colorArgb: Long,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val color = Color(colorArgb.toInt())
+    val foreground = if (color.luminance() > 0.45f) Color(0xFF171814) else Color.White
+    Card(
+        modifier = modifier.height(52.dp).clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = color, contentColor = foreground),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (selected) 6.dp else 0.dp),
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(if (selected) "✓ $name" else name, style = MaterialTheme.typography.labelMedium)
+        }
+    }
 }
 
 @Composable

@@ -2,8 +2,11 @@ package io.github.manxisuo.spriglauncher.platform
 
 import android.app.AppOpsManager
 import android.app.role.RoleManager
+import android.provider.AlarmClock
 import android.content.Context
 import android.content.Intent
+import android.content.ComponentName
+import android.content.pm.ApplicationInfo
 import android.os.Process
 import android.provider.Settings
 
@@ -34,4 +37,24 @@ class SystemAccess(private val context: Context) {
     fun appDetailsIntent(packageName: String) = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
         .setData(android.net.Uri.parse("package:$packageName"))
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    fun clockIntent(): Intent = context.packageManager
+        .getLaunchIntentForPackage(XIAOMI_CLOCK_PACKAGE)
+        ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ?: Intent(AlarmClock.ACTION_SHOW_ALARMS)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    fun calendarIntent(): Intent {
+        val intent = Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_CALENDAR)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val handlers = context.packageManager.queryIntentActivities(intent, 0)
+        val preferred = handlers.firstOrNull {
+            it.activityInfo.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM != 0
+        } ?: handlers.firstOrNull()
+        return preferred?.activityInfo?.let {
+            intent.setComponent(ComponentName(it.packageName, it.name))
+        } ?: intent
+    }
+
+    private companion object {
+        const val XIAOMI_CLOCK_PACKAGE = "com.android.deskclock"
+    }
 }

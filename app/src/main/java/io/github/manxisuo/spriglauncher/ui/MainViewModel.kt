@@ -8,6 +8,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.room.withTransaction
 import io.github.manxisuo.spriglauncher.SprigApplication
 import io.github.manxisuo.spriglauncher.data.AppPreferenceEntity
+import io.github.manxisuo.spriglauncher.data.BackgroundMode
+import io.github.manxisuo.spriglauncher.data.BackgroundSettings
 import io.github.manxisuo.spriglauncher.data.RankingSnapshotEntity
 import io.github.manxisuo.spriglauncher.data.ThemeMode
 import io.github.manxisuo.spriglauncher.domain.LaunchableEntry
@@ -21,7 +23,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import java.time.Instant
 import java.time.ZoneId
 
 enum class Screen { HOME, ALL_APPS, SETTINGS }
@@ -35,6 +36,10 @@ data class LauncherUiState(
     val preferences: List<AppPreferenceEntity> = emptyList(),
     val rankingUpdatedAt: Long? = null,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val backgroundMode: BackgroundMode = BackgroundMode.DEFAULT,
+    val backgroundColorArgb: Long = 0xFFF3F0E8,
+    val backgroundImage: Bitmap? = null,
+    val backgroundImageUri: String? = null,
     val usageAccess: Boolean = false,
     val homeRoleHeld: Boolean = false,
     val coverageStartAt: Long? = null,
@@ -60,6 +65,8 @@ class MainViewModel(private val app: SprigApplication) : ViewModel() {
     private var usage = emptyList<io.github.manxisuo.spriglauncher.data.UsageDailyBucketEntity>()
     private var ranking = emptyList<RankingSnapshotEntity>()
     private var theme = ThemeMode.SYSTEM
+    private var background = BackgroundSettings()
+    private var backgroundImage: Bitmap? = null
     private var lastSyncAt = 0L
 
     init {
@@ -69,6 +76,18 @@ class MainViewModel(private val app: SprigApplication) : ViewModel() {
         viewModelScope.launch { app.usage.usage.collectLatest { usage = it; rebuild() } }
         viewModelScope.launch { app.database.dao().observeRanking().collectLatest { ranking = it; rebuild() } }
         viewModelScope.launch { app.settings.theme.collectLatest { theme = it; rebuild() } }
+        viewModelScope.launch {
+            app.settings.background.collectLatest { value ->
+                background = value
+                backgroundImage = if (value.mode == BackgroundMode.IMAGE && value.imageUri != null) {
+                    app.backgroundImageLoader.load(value.imageUri)
+                } else null
+                if (value.mode == BackgroundMode.IMAGE && backgroundImage == null) {
+                    setStatus("背景图片无法读取，请重新选择")
+                }
+                rebuild()
+            }
+        }
     }
 
     fun onResume(forceSync: Boolean = false) = viewModelScope.launch {
@@ -106,12 +125,19 @@ class MainViewModel(private val app: SprigApplication) : ViewModel() {
     fun toggleExcluded(entry: LaunchableEntry) = viewModelScope.launch { app.preferences.toggleExcluded(entry); publishRanking() }
     fun movePinned(entry: LaunchableEntry, delta: Int) = viewModelScope.launch { app.preferences.movePinned(entry.id, delta) }
     fun setTheme(value: ThemeMode) = viewModelScope.launch { app.settings.setTheme(value) }
+    fun useDefaultBackground() = viewModelScope.launch { app.settings.useDefaultBackground() }
+    fun useColorBackground(colorArgb: Long) = viewModelScope.launch { app.settings.useColorBackground(colorArgb) }
+    fun useImageBackground(uri: String) = viewModelScope.launch { app.settings.useImageBackground(uri) }
     fun clearLearning() = viewModelScope.launch { app.usage.clearLearning(); publishRanking(); setStatus("学习数据已清空，固定与排除设置已保留") }
     fun manualResort() = viewModelScope.launch { publishRanking(); setStatus("常用区已重新排序") }
     fun homeRoleRequest(): Intent? = app.systemAccess.homeRoleRequest()
     fun homeSettingsIntent(): Intent = app.systemAccess.homeSettingsIntent()
     fun usageSettingsIntent(): Intent = app.systemAccess.usageSettingsIntent()
     fun appDetailsIntent(packageName: String): Intent = app.systemAccess.appDetailsIntent(packageName)
+    fun clockIntent(): Intent = app.systemAccess.clockIntent()
+    fun calendarIntent(): Intent = app.systemAccess.calendarIntent()
+    fun externalLaunchFailed(label: String) { setStatus("未找到可打开的${label}应用") }
+    fun backgroundImagePermissionFailed() { setStatus("无法保留图片读取权限，请换一张图片重试") }
     fun consumeStatus() { _state.value = _state.value.copy(status = null) }
     fun statsFor(entry: LaunchableEntry): AppStats {
         val source = UsagePolicy.activeSource(app.systemAccess.hasUsageAccess())
@@ -147,7 +173,7 @@ class MainViewModel(private val app: SprigApplication) : ViewModel() {
         val pinnedIds = preferences.filter { it.pinnedOrder != null }.sortedBy { it.pinnedOrder }.map { it.entryId }
         val byId = entries.associateBy { it.id }
         val frequent = ranking.mapNotNull { byId[it.entryId] }.filterNot { it.id in pinnedIds }.take(12)
-        val source = if (app.systemAccess.hasUsageAccess()) UsageSource.SYSTEM else UsageSource.LAUNCHER
+        val source = UsagePolicy.activeSource(app.systemAccess.hasUsageAccess())
         val hasUsage = usage.any { it.source == source.name && it.count > 0 }
         viewModelScope.launch {
             val checkpoint = app.usage.checkpoint()
@@ -159,6 +185,10 @@ class MainViewModel(private val app: SprigApplication) : ViewModel() {
                 preferences = preferences,
                 rankingUpdatedAt = ranking.firstOrNull()?.updatedAt,
                 themeMode = theme,
+                backgroundMode = background.mode,
+                backgroundColorArgb = background.colorArgb,
+                backgroundImage = backgroundImage,
+                backgroundImageUri = background.imageUri,
                 usageAccess = app.systemAccess.hasUsageAccess(),
                 homeRoleHeld = app.systemAccess.isHomeRoleHeld(),
                 coverageStartAt = checkpoint?.coverageStartAt?.takeIf { it > 0 },

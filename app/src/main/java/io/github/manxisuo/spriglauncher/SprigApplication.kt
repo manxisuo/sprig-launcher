@@ -6,6 +6,7 @@ import io.github.manxisuo.spriglauncher.data.PreferenceRepository
 import io.github.manxisuo.spriglauncher.data.SettingsRepository
 import io.github.manxisuo.spriglauncher.data.UsageRepository
 import io.github.manxisuo.spriglauncher.platform.AppCatalog
+import io.github.manxisuo.spriglauncher.platform.BackgroundImageLoader
 import io.github.manxisuo.spriglauncher.platform.SystemAccess
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +21,7 @@ class SprigApplication : Application() {
     lateinit var usage: UsageRepository
     lateinit var settings: SettingsRepository
     lateinit var systemAccess: SystemAccess
+    lateinit var backgroundImageLoader: BackgroundImageLoader
 
     override fun onCreate() {
         super.onCreate()
@@ -29,6 +31,7 @@ class SprigApplication : Application() {
         usage = UsageRepository(this, database)
         settings = SettingsRepository(this)
         systemAccess = SystemAccess(this)
+        backgroundImageLoader = BackgroundImageLoader(this)
         requestCatalogRefresh()
     }
 
