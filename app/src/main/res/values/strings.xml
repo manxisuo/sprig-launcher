@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Sprig Launcher</string>
+    <string name="launcher_description">按使用频率组织应用的本地桌面</string>
+</resources>
